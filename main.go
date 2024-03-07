@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 // Set up the logger
@@ -43,7 +44,7 @@ func main() {
 
 	// Create the CSV writer with the output file
 	csvWriter := csv.NewWriter(outFile)
-	if err := csvWriter.Write([]string{"type", "hostname", "security_group_id", "sg_type", "description", "from_port", "to_port", "protocol", "cidr_block"}); err != nil {
+	if err := csvWriter.Write([]string{"type", "hostname", "security_group_id", "security_group_rule_id", "sgr_type", "description", "from_port", "to_port", "protocol", "cidr_block_or_reference_sg_id"}); err != nil {
 		logger.Error(err.Error())
 	}
 
@@ -70,80 +71,75 @@ func main() {
 	// Iterate over the instances which are nested in reservations
 	for _, res := range insts.Reservations {
 		for _, inst := range res.Instances {
-			hostname := inst.NetworkInterfaces[0].PrivateDnsName
 			// Iterate over the security groups
 			for _, sg := range inst.SecurityGroups {
-				groupId := *sg.GroupId
-
 				// Write the security group to the CSV
-				if err := csvWriter.Write([]string{"sg", *hostname, groupId}); err != nil {
-					logger.Error(err.Error())
-				}
-
-				// Describe the security group to get the rules
-				sgs, err := svc.DescribeSecurityGroups(context.TODO(), &ec2.DescribeSecurityGroupsInput{
-					GroupIds: []string{groupId},
-				})
-				if err != nil {
+				if err := csvWriter.Write([]string{"sg", *inst.NetworkInterfaces[0].PrivateDnsName, *sg.GroupId}); err != nil {
 					logger.Error(err.Error())
 				}
 
 				// Iterate over the security group rules
-				for _, sg := range sgs.SecurityGroups {
-					// Iterate over the ingress rules
-					for _, ipPerm := range sg.IpPermissions {
-						var fromPortStr, toPortStr string
+		    sgrs, err := svc.DescribeSecurityGroupRules(context.TODO(), &ec2.DescribeSecurityGroupRulesInput{
+				  Filters: []ec2Types.Filter{
+					  {
+						  Name:  aws.String("group-id"),
+							Values: []string{*sg.GroupId},
+						},
+					},
+				},)
+				if err != nil {
+					logger.Error(err.Error())
+				}
 
-						// If the FromPort is nil, set it to 0
-						// If the ToPort is nil, set it to 0
-						if ipPerm.FromPort == nil {
-							fromPortStr = "0"
-						} else {
-							// Convert the FromPort to a string
-						  fromPortStr = strconv.Itoa(int(*ipPerm.FromPort))
-						}
-						if ipPerm.ToPort == nil {
-							toPortStr = "0"
-						} else {
-							// Convert the ToPort to a string
-							toPortStr = strconv.Itoa(int(*ipPerm.ToPort))
-						}
-
-						// Iterate over the CIDR ranges
-						for _, ipRange := range ipPerm.IpRanges {
-							// Write the security group rule to the CSV
-							if err := csvWriter.Write([]string{"sgrule", *hostname, groupId, "ingress", *sg.Description, fromPortStr, toPortStr, *ipPerm.IpProtocol, *ipRange.CidrIp}); err != nil {
-								logger.Error(err.Error())
-							}
-						}
+				for _, sgr := range sgrs.SecurityGroupRules {
+					var sgrDesc, sgrProtocol, sgrType, sgrFromPort, sgrToPort, sgrCidr string
+				
+					if sgr.Description == nil {
+						sgrDesc = "Unspecified"
+					} else {
+						sgrDesc = *sgr.Description
 					}
 
-					// Iterate over the egress rules
-					for _, ipPermEgress := range sg.IpPermissionsEgress {
-						var fromPortStr, toPortStr string
+					if *sgr.IsEgress {
+						sgrType = "egress"
+					} else {
+						sgrType = "ingress"
+					}
 
-						// If the FromPort is nil, set it to 0
-						// If the ToPort is nil, set it to 0
-						if ipPermEgress.FromPort == nil {
-							fromPortStr = "0"
+					if sgr.FromPort == nil {
+						sgrFromPort = "0"
+					} else {
+						sgrFromPort = strconv.Itoa(int(*sgr.FromPort))
+					}
+					
+					if sgr.ToPort == nil {
+						sgrToPort = "0"
+					} else {
+						sgrToPort = strconv.Itoa(int(*sgr.ToPort))
+					}
+
+					if sgr.IpProtocol == nil {
+						sgrProtocol = "-1"
+					} else {
+						sgrProtocol = *sgr.IpProtocol
+					}
+
+					if sgr.CidrIpv4 == nil {
+						if sgr.CidrIpv6 == nil {
+							if sgr.ReferencedGroupInfo == nil {
+								sgrCidr = "Unspecified"
+							} else {
+								sgrCidr = *sgr.ReferencedGroupInfo.GroupId
+							}
 						} else {
-							// Convert the FromPort to a string
-							fromPortStr = strconv.Itoa(int(*ipPermEgress.FromPort))
+							sgrCidr = *sgr.CidrIpv6
 						}
-						if ipPermEgress.ToPort == nil {
-							toPortStr = "0"
-						} else {
-							// Convert the ToPort to a string
-							toPortStr = strconv.Itoa(int(*ipPermEgress.ToPort))
-						}
-				  
-						// Iterate over the CIDR ranges
-				    for _, ipRange := range ipPermEgress.IpRanges {
-							// Write the security group rule to the CSV
-					    if err := csvWriter.Write([]string{"sgrule", *hostname, groupId, "egress", *sg.Description, fromPortStr, toPortStr, *ipPermEgress.IpProtocol, *ipRange.CidrIp}); err != nil {
-					      logger.Error(err.Error())
-					    }
-					  }
+					} else {
+						sgrCidr = *sgr.CidrIpv4
+					}
+
+					if err := csvWriter.Write([]string{"sgr", *inst.NetworkInterfaces[0].PrivateDnsName, *sg.GroupId, *sgr.SecurityGroupRuleId, sgrType, sgrDesc, sgrFromPort, sgrToPort, sgrProtocol, sgrCidr}); err != nil {
+						logger.Error(err.Error())
 					}
 				}
 			}
