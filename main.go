@@ -78,7 +78,7 @@ func main() {
 					logger.Error(err.Error())
 				}
 
-				// Iterate over the security group rules
+				// Get the security group rules
 		    sgrs, err := svc.DescribeSecurityGroupRules(context.TODO(), &ec2.DescribeSecurityGroupRulesInput{
 				  Filters: []ec2Types.Filter{
 					  {
@@ -91,39 +91,48 @@ func main() {
 					logger.Error(err.Error())
 				}
 
+				// Iterate over the security group rules
 				for _, sgr := range sgrs.SecurityGroupRules {
 					var sgrDesc, sgrProtocol, sgrType, sgrFromPort, sgrToPort, sgrCidr string
 				
+					// Build a local variable for the sgr Description and default to "Unspecified" if it's nil
 					if sgr.Description == nil {
 						sgrDesc = "Unspecified"
 					} else {
 						sgrDesc = *sgr.Description
 					}
 
+					// Determine the type of security group rule
 					if *sgr.IsEgress {
 						sgrType = "egress"
 					} else {
 						sgrType = "ingress"
 					}
 
+					// Build a local variable for the sgr FromPort and ToPort and default to "0" if it's nil
 					if sgr.FromPort == nil {
 						sgrFromPort = "0"
 					} else {
 						sgrFromPort = strconv.Itoa(int(*sgr.FromPort))
 					}
 					
+					// Build a local variable for the sgr ToPort and default to "0" if it's nil
 					if sgr.ToPort == nil {
 						sgrToPort = "0"
 					} else {
 						sgrToPort = strconv.Itoa(int(*sgr.ToPort))
 					}
 
+					// Build a local variable for the sgr Protocol and default to "-1" if it's nil
 					if sgr.IpProtocol == nil {
 						sgrProtocol = "-1"
 					} else {
 						sgrProtocol = *sgr.IpProtocol
 					}
 
+					// Build a local variable for the sgr Cidr and default to "Unspecified" if the IPv4 and IPv6 CIDRs are nil
+					// and there is not referenced group. If there is a referenced group, use the GroupId, otherwise use the
+					// IPv4 or IPv6 CIDR
 					if sgr.CidrIpv4 == nil {
 						if sgr.CidrIpv6 == nil {
 							if sgr.ReferencedGroupInfo == nil {
@@ -138,6 +147,7 @@ func main() {
 						sgrCidr = *sgr.CidrIpv4
 					}
 
+					// Write the security group rule to the CSV
 					if err := csvWriter.Write([]string{"sgr", *inst.NetworkInterfaces[0].PrivateDnsName, *sg.GroupId, *sgr.SecurityGroupRuleId, sgrType, sgrDesc, sgrFromPort, sgrToPort, sgrProtocol, sgrCidr}); err != nil {
 						logger.Error(err.Error())
 					}
